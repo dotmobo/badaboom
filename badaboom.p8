@@ -6,6 +6,15 @@ __lua__
 c_debug=false -- to debug size screen 96x96 format
 c_min_screen=0+16 --like 0 but in 96x96 format
 c_max_screen=128-16 -- like 128 in 96x96 format
+c_p_x=60 -- player initial x position
+c_p_y=25 -- player initial y position
+c_p_life=3 -- player initial lifes
+c_p_sprite=9 -- player initial sprite
+c_p_boost_run=30 --boost duration
+c_p_boost_timer=30*5 --time between boost
+c_max_game_speed=5 --max game speed
+c_inc_game_speed=0.05 --speed increase
+c_step_game_speed=100 --increase speed with scoring
 
 function _init()
 	state=2
@@ -65,6 +74,7 @@ function draw_gameover()
 	rectfill(31,73,105,109,13)
 	rectfill(28,70,102,106,2)
 	print("game over",34,76,6)
+	print("score:"..score,34,86,6)
 	print("c or 🅾️ to retry",34,96,6)
 end
 -->8
@@ -74,9 +84,14 @@ function init_game()
 	speed=1
 	boost=0
 	music_start=false
+	init_hud()
+	init_player()
+	init_cars()
+	init_explosions()
 	init_birds()
 	init_building()
 	init_winds()
+	init_love()
 end
 
 function update_game()
@@ -84,9 +99,17 @@ function update_game()
 		music(0)
 		music_start=true
 	end
+	if score%c_step_game_speed==0 and speed<c_max_game_speed then
+		speed+=c_inc_game_speed
+	end
 	update_building()
 	update_winds()
+	update_cars()
+	update_explosions()
 	update_birds()
+	update_love()
+	update_player()
+	update_hud()
 end
 
 function draw_game()
@@ -94,6 +117,129 @@ function draw_game()
 	draw_birds()
 	draw_building()
 	draw_winds()
+	draw_player()
+	draw_cars()
+	draw_explosions()
+	draw_love()
+	draw_hud()
+end
+
+-->8
+--hud
+function init_hud()
+	score=0
+end
+
+function update_hud()
+	score+=1
+end
+
+function draw_hud()
+	-- life
+	for i=0,p.life-1 do
+		spr(63,1+c_min_screen+i*8,c_max_screen-8-1) -- 1 margin
+	end
+	--timer
+	print(score,1+c_min_screen,1+c_min_screen,7) -- 1 margin
+	--
+	if p.boost_timer>0 and p.boost_run==0 then
+		spr(61,c_max_screen-8-1,c_max_screen-8-1) -- 1 margin
+	end
+end
+
+-->8
+-- player
+function init_player()
+	p={x=c_p_x,y=c_p_y,f=false,s=c_p_sprite,a=0,
+		life=c_p_life,boost_timer=0, boost_run=0}
+end
+
+function update_player()
+	-- move player
+	if btn(⬅️) then
+		p.x-=1
+		p.f=true
+	end
+	if btn(➡️) then
+		p.x+=1
+		p.f=false
+	end
+	if btn(❎) and p.boost_timer==0 and p.boost_run==0 then
+		p.boost_run=c_p_boost_run
+		p.boost_timer=c_p_boost_timer
+	end
+	-- boost run
+	if p.boost_run>0 then
+		boost=1
+		p.boost_run-=1
+	else
+		boost=0
+	end
+	-- boost timer
+	if p.boost_timer>0 then
+		p.boost_timer-=1
+	end
+	-- map size 96x96
+	if(p.x<c_min_screen) p.x=c_min_screen
+	if(p.x>c_max_screen-8) p.x=c_max_screen-8
+	-- player animations
+	p.a+=1
+	if p.a%12==0 then
+		p.s+=1
+	end
+	if p.s >14 then
+		p.s=9
+		p.a=0
+	end
+	-- love
+	for l in all(love) do
+		if collide_love(p,l) then
+			sfx(2)
+			del(love,l)
+			if p.life<3 then
+				p.life+=1
+			end
+		end
+	end
+	--death
+	if p.life<=0 then
+		sfx(1)
+		state=1
+	end
+end
+
+function draw_player()
+	spr(p.s, p.x,p.y,1,1,p.f)
+	if boost>0 then
+		spr(62, p.x,p.y-8,1,1,p.f)
+	end
+end
+-->8
+--explosions
+function create_explosion(x,y)
+	sfx(0)
+	add(explosions,{x=x,y=y,
+		timer=0})
+end
+
+function init_explosions()
+	explosions={}
+end
+
+function update_explosions()
+	for e in all(explosions) do
+		e.timer+=1
+			if e.timer==13 then
+				del(explosions,e)
+			end
+	end
+end
+
+function draw_explosions()
+	for e in all(explosions) do
+		circ(e.x,e.y,e.timer/3,
+		8+e.timer%3)
+	end
 end
 -->8
 -- building
@@ -200,6 +346,89 @@ function draw_winds()
 	for s in all(winds) do
 		pset(s.x,s.y,s.col)
 	end
+end
+-->8
+-- cars
+function init_cars()
+	cars={}
+end
+
+function update_cars()
+	-- spawn cars
+	if #cars<3 then
+		for i=0,rnd(8) do
+			local c={x=c_min_screen-rnd(128),y=96+rnd(96),s=rnd({5,21,37,53}),a=0}
+			add(cars,c)
+		end
+		if p.life<3 and ceil(rnd({1,2}))==2 then
+			spawn_love({x=c_min_screen+rnd(89),y=c_max_screen+rnd(32)})
+		end
+	end
+	-- move cars
+	for c in all(cars) do
+		c.x+=speed/2
+		c.y-=speed/2+boost
+		-- remove cars outside screen
+		if c.x>c_max_screen+16 or c.y<c_min_screen-16 then
+			del(cars,c)
+		end
+		if collide_car(p,c) then
+			create_explosion(c.x+4,c.y+2)
+			del(cars,c)
+			p.life-=1
+		end
+	end
+end
+
+function draw_cars()
+	for c in all(cars) do
+		spr(c.s,c.x,c.y,2,1)
+	end
+end
+-->8
+-- love
+function init_love()
+	love={}
+end
+
+function spawn_love(e)
+	local new_love={
+		x=e.x,
+		y=e.y;
+		speed=speed/2,
+		type=63
+	}
+	add(love, new_love)
+end
+
+function update_love()
+	for l in all(love) do
+		l.y-=l.speed+boost
+		if l.y<c_min_screen-8 then
+			del(love,l)
+		end
+	end
+end
+
+function draw_love()
+	for l in all(love) do
+		spr(l.type,l.x,l.y)
+	end
+end
+-->8
+-- misc
+function collide_car(player,car)
+	return not (player.x>car.x+16
+		or player.y>car.y+8
+		or player.x+8<car.x
+		or player.y+8<car.y)
+end
+
+function collide_love(player,love)
+	return not (player.x>love.x+8
+		or player.y>love.y+8
+		or player.x+8<love.x
+		or player.y+8<love.y)
 end
 __gfx__
 0000000055555555555665555556655555555555000088711000000000000000000000000000e00000e000000000e00000e000000000e00000e0000000000000
@@ -355,4 +584,4 @@ __sfx__
 __music__
 00 05454344
 02 05064344
-0000
+
